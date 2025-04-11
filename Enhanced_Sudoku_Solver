@@ -1,0 +1,447 @@
+import tkinter as tk
+from tkinter import messagebox, filedialog
+import time
+import random
+import json
+from collections import deque
+
+def is_valid(board, num, pos):
+    row, col = pos
+
+    if num in board[row]:
+        return False
+
+    for i in range(9):
+        if board[i][col] == num:
+            return False
+
+    box_x = col // 3
+    box_y = row // 3
+    for i in range(box_y * 3, box_y * 3 + 3):
+        for j in range(box_x * 3, box_x * 3 + 3):
+            if board[i][j] == num:
+                return False
+
+    return True
+
+def find_empty(board):
+    for i in range(9):
+        for j in range(9):
+            if board[i][j] == 0:
+                return (i, j)
+    return None
+
+def solve(board):
+    empty = find_empty(board)
+    if not empty:
+        return True
+    row, col = empty
+
+    for num in range(1, 10):
+        if is_valid(board, num, (row, col)):
+            board[row][col] = num
+            if solve(board):
+                return True
+            board[row][col] = 0
+
+    return False
+
+def generate_sudoku(difficulty=30):
+    # Create an empty board
+    board = [[0 for _ in range(9)] for _ in range(9)]
+    
+    for box in range(0, 9, 3):
+        nums = list(range(1, 10))
+        random.shuffle(nums)
+        for i in range(3):
+            for j in range(3):
+                board[box + i][box + j] = nums.pop()
+    
+    solve(board)
+    
+    for _ in range(difficulty):
+        row, col = random.randint(0, 8), random.randint(0, 8)
+        while board[row][col] == 0:
+            row, col = random.randint(0, 8), random.randint(0, 8)
+        board[row][col] = 0
+    
+    return board
+
+class SudokuGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Enhanced Sudoku Solver")
+        self.entries = [[None for _ in range(9)] for _ in range(9)]
+        self.solution = [[0 for _ in range(9)] for _ in range(9)]
+        self.score = 0
+        self.start_time = 0
+        self.timer_running = False
+        self.undo_stack = deque(maxlen=100)
+        self.redo_stack = deque(maxlen=100)
+        self.current_game_file = None
+        
+        self.root.geometry("800x700")
+        self.root.minsize(700, 650)
+        
+        self.root.option_add('*Font', 'Arial 12')
+        self.root.configure(bg='#f0f0f0')
+        
+        self.create_widgets()
+        self.new_game()
+
+    def create_widgets(self):
+        # Create main frames
+        self.main_frame = tk.Frame(self.root, bg='#f0f0f0')
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        self.grid_frame = tk.Frame(self.main_frame, bg='black', padx=2, pady=2)
+        self.grid_frame.pack(pady=(0, 20))
+        
+        for i in range(9):
+            for j in range(9):
+                padx = (3, 0) if j % 3 == 0 else (0, 0)
+                pady = (3, 0) if i % 3 == 0 else (0, 0)
+                entry = tk.Entry(self.grid_frame, width=2, font=('Arial', 24), 
+                               justify='center', borderwidth=1, relief='solid')
+                entry.grid(row=i, column=j, padx=padx, pady=pady, ipady=5)
+                entry.bind('<FocusIn>', lambda e, row=i, col=j: self.highlight_cells(row, col))
+                entry.bind('<Key>', lambda e, row=i, col=j: self.on_entry_change(row, col))
+                self.entries[i][j] = entry
+
+        self.button_frame = tk.Frame(self.main_frame, bg='#f0f0f0')
+        self.button_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        left_btn_frame = tk.Frame(self.button_frame, bg='#f0f0f0')
+        left_btn_frame.pack(side=tk.LEFT, expand=True)
+        
+        right_btn_frame = tk.Frame(self.button_frame, bg='#f0f0f0')
+        right_btn_frame.pack(side=tk.RIGHT, expand=True)
+        
+        new_game_btn = tk.Button(left_btn_frame, text="New Game", command=self.new_game, 
+                               bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), padx=10)
+        new_game_btn.pack(side=tk.LEFT, padx=5)
+        
+        save_btn = tk.Button(left_btn_frame, text="Save Game", command=self.save_game, 
+                           bg="#2196F3", fg="white", font=("Arial", 12, "bold"), padx=10)
+        save_btn.pack(side=tk.LEFT, padx=5)
+        
+        load_btn = tk.Button(left_btn_frame, text="Load Game", command=self.load_game, 
+                           bg="#2196F3", fg="white", font=("Arial", 12, "bold"), padx=10)
+        load_btn.pack(side=tk.LEFT, padx=5)
+        
+        solve_btn = tk.Button(right_btn_frame, text="Solve", command=self.solve_sudoku, 
+                            bg="#FF9800", fg="white", font=("Arial", 12, "bold"), padx=10)
+        solve_btn.pack(side=tk.LEFT, padx=5)
+        
+        hint_btn = tk.Button(right_btn_frame, text="Hint", command=self.give_hint, 
+                           bg="#FFC107", fg="black", font=("Arial", 12, "bold"), padx=10)
+        hint_btn.pack(side=tk.LEFT, padx=5)
+        
+        validate_btn = tk.Button(right_btn_frame, text="Validate", command=self.validate_board, 
+                               bg="#9C27B0", fg="white", font=("Arial", 12, "bold"), padx=10)
+        validate_btn.pack(side=tk.LEFT, padx=5)
+        
+        undo_redo_frame = tk.Frame(self.main_frame, bg='#f0f0f0')
+        undo_redo_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        undo_btn = tk.Button(undo_redo_frame, text="Undo", command=self.undo_move, 
+                           bg="#607D8B", fg="white", font=("Arial", 12), padx=10)
+        undo_btn.pack(side=tk.LEFT, padx=5)
+        
+        redo_btn = tk.Button(undo_redo_frame, text="Redo", command=self.redo_move, 
+                           bg="#607D8B", fg="white", font=("Arial", 12), padx=10)
+        redo_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.info_frame = tk.Frame(self.main_frame, bg='#f0f0f0')
+        self.info_frame.pack(fill=tk.X)
+        
+        self.timer_label = tk.Label(self.info_frame, text="Time: 00:00", font=("Arial", 14), bg='#f0f0f0')
+        self.timer_label.pack(side=tk.LEFT, padx=10)
+        
+        self.score_label = tk.Label(self.info_frame, text=f"Score: {self.score}", font=("Arial", 14), bg='#f0f0f0')
+        self.score_label.pack(side=tk.LEFT, padx=10)
+        
+        self.difficulty_label = tk.Label(self.info_frame, text="Difficulty: Medium", font=("Arial", 14), bg='#f0f0f0')
+        self.difficulty_label.pack(side=tk.LEFT, padx=10)
+
+    def highlight_cells(self, row, col):
+        # Reset all colors first
+        for i in range(9):
+            for j in range(9):
+                if self.entries[i][j]['state'] != 'readonly':
+                    self.entries[i][j].config(bg="white")
+        
+        for i in range(9):
+            if self.entries[row][i]['state'] != 'readonly':
+                self.entries[row][i].config(bg="#f0f0f0")
+            if self.entries[i][col]['state'] != 'readonly':
+                self.entries[i][col].config(bg="#f0f0f0")
+        
+        box_x = col // 3
+        box_y = row // 3
+        for i in range(box_y * 3, box_y * 3 + 3):
+            for j in range(box_x * 3, box_x * 3 + 3):
+                if self.entries[i][j]['state'] != 'readonly':
+                    self.entries[i][j].config(bg="#f0f0f0")
+        
+        if self.entries[row][col]['state'] != 'readonly':
+            self.entries[row][col].config(bg="#d0d0d0")
+
+    def on_entry_change(self, row, col):
+        current_value = self.entries[row][col].get()
+        self.undo_stack.append(('change', row, col, current_value))
+        self.redo_stack.clear()  # Clear redo stack when new change is made
+
+    def undo_move(self):
+        if not self.undo_stack:
+            messagebox.showinfo("Info", "Nothing to undo")
+            return
+        
+        action = self.undo_stack.pop()
+        if action[0] == 'change':
+            _, row, col, value = action
+            current_value = self.entries[row][col].get()
+            self.redo_stack.append(('change', row, col, current_value))
+            self.entries[row][col].delete(0, tk.END)
+            if value:
+                self.entries[row][col].insert(0, value)
+        
+        self.highlight_cells(row, col)
+
+    def redo_move(self):
+        if not self.redo_stack:
+            messagebox.showinfo("Info", "Nothing to redo")
+            return
+        
+        action = self.redo_stack.pop()
+        if action[0] == 'change':
+            _, row, col, value = action
+            current_value = self.entries[row][col].get()
+            self.undo_stack.append(('change', row, col, current_value))
+            self.entries[row][col].delete(0, tk.END)
+            if value:
+                self.entries[row][col].insert(0, value)
+        
+        self.highlight_cells(row, col)
+
+    def get_board(self):
+        board = []
+        for i in range(9):
+            row = []
+            for j in range(9):
+                val = self.entries[i][j].get()
+                if val == '':
+                    row.append(0)
+                else:
+                    try:
+                        row.append(int(val))
+                    except:
+                        row.append(0)
+            board.append(row)
+        return board
+
+    def fill_board(self, board, initial=False):
+        for i in range(9):
+            for j in range(9):
+                self.entries[i][j].delete(0, tk.END)
+                if board[i][j] != 0:
+                    self.entries[i][j].insert(0, str(board[i][j]))
+                    if initial:
+                        self.entries[i][j].config(state='readonly', readonlybackground="#e0e0e0", fg="black")
+                    else:
+                        self.entries[i][j].config(fg="blue")
+
+    def solve_sudoku(self):
+        board = self.get_board()
+        if solve(board):
+            self.fill_board(board)
+            self.stop_timer()
+            self.update_score(50) 
+            messagebox.showinfo("Solved", "The Sudoku has been solved!")
+        else:
+            messagebox.showerror("No Solution", "This Sudoku puzzle cannot be solved.")
+
+    def clear_board(self):
+        for i in range(9):
+            for j in range(9):
+                if self.entries[i][j]['state'] != 'readonly':
+                    self.entries[i][j].delete(0, tk.END)
+
+    def validate_board(self):
+        user_board = self.get_board()
+        solved_board = [row[:] for row in self.solution] 
+
+        for i in range(9):
+            for j in range(9):
+                if user_board[i][j] != 0 and user_board[i][j] != solved_board[i][j]:
+                    self.entries[i][j].config(bg="#ffcccc")
+                    messagebox.showerror("Incorrect", "Your Sudoku board has some wrong entries.")
+                    return
+        
+        if find_empty(user_board):
+            messagebox.showinfo("Partial Solution", "Your solution is correct so far, but incomplete.")
+            self.update_score(10) 
+        else:
+            self.stop_timer()
+            self.update_score(100) 
+            messagebox.showinfo("Correct", "Congratulations! Your solution is completely correct!")
+
+    def give_hint(self):
+        board = self.get_board()
+        empty_cells = []
+        
+        for i in range(9):
+            for j in range(9):
+                if board[i][j] == 0:
+                    empty_cells.append((i, j))
+        
+        if not empty_cells:
+            messagebox.showinfo("No Hint Needed", "The puzzle is already complete!")
+            return
+        
+       
+        min_possibilities = 10
+        hint_cell = None
+        
+        for row, col in empty_cells:
+            possibilities = 0
+            for num in range(1, 10):
+                if is_valid(board, num, (row, col)):
+                    possibilities += 1
+            if 0 < possibilities < min_possibilities:
+                min_possibilities = possibilities
+                hint_cell = (row, col)
+        
+        if hint_cell:
+            row, col = hint_cell
+            correct_num = self.solution[row][col]
+            self.undo_stack.append(('change', row, col, self.entries[row][col].get()))
+            self.entries[row][col].delete(0, tk.END)
+            self.entries[row][col].insert(0, str(correct_num))
+            self.entries[row][col].config(fg="green")
+            self.update_score(-5)  
+            messagebox.showinfo("Hint", f"The correct number for row {row+1}, column {col+1} is {correct_num}")
+        else:
+            messagebox.showerror("Error", "No valid hint could be provided.")
+
+    def new_game(self):
+        difficulty = random.choice([25, 35, 45])  
+        puzzle = generate_sudoku(difficulty)
+        self.solution = [row[:] for row in puzzle]
+        solve(self.solution) 
+        
+       
+        for i in range(9):
+            for j in range(9):
+                self.entries[i][j].config(state='normal', bg='white', fg='black')
+        
+        self.fill_board(puzzle, initial=True)
+        
+        # Reset score and timer
+        self.score = 0
+        self.update_score(0)
+        self.start_timer()
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.current_game_file = None
+        
+        if difficulty == 25:
+            self.difficulty_label.config(text="Difficulty: Easy")
+        elif difficulty == 35:
+            self.difficulty_label.config(text="Difficulty: Medium")
+        else:
+            self.difficulty_label.config(text="Difficulty: Hard")
+
+    def save_game(self):
+        game_state = {
+            'puzzle': self.get_board(),
+            'solution': self.solution,
+            'score': self.score,
+            'time_elapsed': int(time.time() - self.start_time) if self.timer_running else 0,
+            'difficulty': self.difficulty_label.cget("text").split(": ")[1]
+        }
+        
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".sdk",
+            filetypes=[("Sudoku Files", "*.sdk"), ("All Files", "*.*")],
+            title="Save Sudoku Game"
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(game_state, f)
+                self.current_game_file = file_path
+                messagebox.showinfo("Success", "Game saved successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save game: {str(e)}")
+
+    def load_game(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[("Sudoku Files", "*.sdk"), ("All Files", "*.*")],
+            title="Load Sudoku Game"
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    game_state = json.load(f)
+                
+                self.solution = game_state['solution']
+                self.score = game_state['score']
+                self.update_score(0)
+                
+                # Reset the board
+                for i in range(9):
+                    for j in range(9):
+                        self.entries[i][j].config(state='normal', bg='white', fg='black')
+                
+                self.fill_board(game_state['puzzle'], initial=False)
+                
+                for i in range(9):
+                    for j in range(9):
+                        if game_state['puzzle'][i][j] != 0:
+                            self.entries[i][j].config(state='readonly', readonlybackground="#e0e0e0", fg="black")
+                
+                # Restart timer with saved time
+                self.start_time = time.time() - game_state['time_elapsed']
+                if not self.timer_running:
+                    self.start_timer()
+                
+                self.difficulty_label.config(text=f"Difficulty: {game_state['difficulty']}")
+                self.current_game_file = file_path
+                self.undo_stack.clear()
+                self.redo_stack.clear()
+                
+                messagebox.showinfo("Success", "Game loaded successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load game: {str(e)}")
+
+    def start_timer(self):
+        if self.timer_running:
+            self.stop_timer()
+        self.start_time = time.time()
+        self.timer_running = True
+        self.update_timer()
+
+    def stop_timer(self):
+        self.timer_running = False
+
+    def update_timer(self):
+        if self.timer_running:
+            elapsed = int(time.time() - self.start_time)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            self.timer_label.config(text=f"Time: {minutes:02d}:{seconds:02d}")
+            self.root.after(1000, self.update_timer)
+
+    def update_score(self, points):
+        self.score += points
+        if self.score < 0:
+            self.score = 0
+        self.score_label.config(text=f"Score: {self.score}")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SudokuGUI(root)
+    root.mainloop()
